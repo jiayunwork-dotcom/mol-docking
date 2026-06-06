@@ -1,5 +1,23 @@
 import { useMolStore } from '../store/molStore';
 import { formatMeasurement } from '../analysis/measurementTools';
+import type { Atom } from '../types';
+
+function getAtomsCenter(atoms: Atom[]): { x: number; y: number; z: number } {
+  if (atoms.length === 0) return { x: 0, y: 0, z: 0 };
+  const sum = atoms.reduce(
+    (acc, atom) => ({
+      x: acc.x + atom.x,
+      y: acc.y + atom.y,
+      z: acc.z + atom.z,
+    }),
+    { x: 0, y: 0, z: 0 }
+  );
+  return {
+    x: sum.x / atoms.length,
+    y: sum.y / atoms.length,
+    z: sum.z / atoms.length,
+  };
+}
 
 export function MeasurementPanel() {
   const {
@@ -10,6 +28,7 @@ export function MeasurementPanel() {
     clearMeasurements,
     selectedAtoms,
     clearSelectedAtoms,
+    flyTo,
   } = useMolStore();
 
   const modeInfo = {
@@ -20,6 +39,11 @@ export function MeasurementPanel() {
   };
 
   const currentMode = modeInfo[measurementMode];
+
+  const handleJumpToMeasurement = (meas: typeof measurements[0]) => {
+    const center = getAtomsCenter(meas.atoms);
+    flyTo(center, 10);
+  };
 
   return (
     <div className="p-4 bg-gray-800 rounded-lg mb-4">
@@ -72,31 +96,46 @@ export function MeasurementPanel() {
 
       {measurements.length > 0 && (
         <>
-          <div className="text-white text-sm mb-2">
-            已保存测量: {measurements.length} 个
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-white text-sm">
+              已保存测量: {measurements.length} 个
+            </span>
+            <button
+              onClick={clearMeasurements}
+              className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs"
+            >
+              清除全部
+            </button>
           </div>
-          <div className="max-h-32 overflow-y-auto space-y-1">
-            {measurements.map((meas) => (
+          <div className="max-h-48 overflow-y-auto space-y-1">
+            {measurements.map((meas, idx) => (
               <div
                 key={meas.id}
                 className="flex items-center justify-between bg-gray-700 p-2 rounded text-sm"
               >
-                <span className="text-white">{formatMeasurement(meas)}</span>
-                <button
-                  onClick={() => removeMeasurement(meas.id)}
-                  className="text-red-400 hover:text-red-300 text-sm"
-                >
-                  删除
-                </button>
+                <span className="text-white">
+                  <span className="text-blue-400 font-mono mr-2">#{idx + 1}</span>
+                  {formatMeasurement(meas)}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleJumpToMeasurement(meas)}
+                    className="text-blue-400 hover:text-blue-300 text-xs"
+                    title="跳转到该测量"
+                  >
+                    跳转
+                  </button>
+                  <button
+                    onClick={() => removeMeasurement(meas.id)}
+                    className="text-red-400 hover:text-red-300 text-xs"
+                    title="删除"
+                  >
+                    删除
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-          <button
-            onClick={clearMeasurements}
-            className="w-full mt-2 px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
-          >
-            清除所有测量
-          </button>
         </>
       )}
     </div>

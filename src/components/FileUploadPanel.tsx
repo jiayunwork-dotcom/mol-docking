@@ -4,7 +4,7 @@ import { parsePDB } from '../parsers/pdbParser';
 import { parseSDF, parseMOL2 } from '../parsers/ligandParser';
 
 export function FileUploadPanel() {
-  const { setProtein, setLigand, setLoading } = useMolStore();
+  const { setProtein, setLigand, setLoading, addWarning, clearWarnings } = useMolStore();
   const proteinInputRef = useRef<HTMLInputElement>(null);
   const ligandInputRef = useRef<HTMLInputElement>(null);
   const [proteinProgress, setProteinProgress] = useState<number | null>(null);
@@ -20,6 +20,7 @@ export function FileUploadPanel() {
     }
 
     setError(null);
+    clearWarnings();
     setLoading(true);
     setProteinProgress(0);
 
@@ -60,6 +61,7 @@ export function FileUploadPanel() {
     }
 
     setError(null);
+    clearWarnings();
     setLoading(true);
 
     try {
@@ -69,14 +71,24 @@ export function FileUploadPanel() {
         if (!content) return;
 
         const ext = file.name.split('.').pop()?.toLowerCase();
-        if (ext === 'sdf') {
-          const ligand = await parseSDF(content, file.name, 20);
-          setLigand(ligand);
-        } else if (ext === 'mol2') {
-          const ligand = await parseMOL2(content, file.name, 20);
-          setLigand(ligand);
-        } else {
-          setError('不支持的配体文件格式，请上传SDF或MOL2文件');
+        try {
+          if (ext === 'sdf') {
+            const result = await parseSDF(content, file.name, 20);
+            setLigand(result.ligand);
+            if (result.wasTruncated) {
+              addWarning('已截取前20个构象,超出部分忽略');
+            }
+          } else if (ext === 'mol2') {
+            const result = await parseMOL2(content, file.name, 20);
+            setLigand(result.ligand);
+            if (result.wasTruncated) {
+              addWarning('已截取前20个构象,超出部分忽略');
+            }
+          } else {
+            setError('不支持的配体文件格式，请上传SDF或MOL2文件');
+          }
+        } catch (parseErr) {
+          setError(`解析配体文件失败: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
         }
         setLoading(false);
       };

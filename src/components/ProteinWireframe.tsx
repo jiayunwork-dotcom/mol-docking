@@ -6,9 +6,10 @@ import { ELEMENT_COLORS } from '../types';
 interface ProteinWireframeProps {
   protein: Protein;
   visibleChains: Set<string>;
+  hideHydrogens: boolean;
 }
 
-export function ProteinWireframe({ protein, visibleChains }: ProteinWireframeProps) {
+export function ProteinWireframe({ protein, visibleChains, hideHydrogens }: ProteinWireframeProps) {
   const groupRef = useRef<THREE.Group>(null);
 
   const { atoms, bonds } = useMemo(() => {
@@ -25,7 +26,11 @@ export function ProteinWireframe({ protein, visibleChains }: ProteinWireframePro
       if (!visibleChains.has(chainId)) return;
       chain.residues.forEach(res => {
         if (!res.isMissing) {
-          visibleAtoms.push(...res.atoms);
+          res.atoms.forEach(atom => {
+            if (!hideHydrogens || !atom.isHydrogen) {
+              visibleAtoms.push(atom);
+            }
+          });
         }
       });
     });

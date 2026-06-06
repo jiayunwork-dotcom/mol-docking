@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useMolStore } from '../store/molStore';
 import { generateRMSDMatrix, getRMSDHeatmapColor } from '../analysis/rmsdCalculator';
 import { CONFORMATION_COLORS } from './MoleculeScene';
@@ -11,6 +12,9 @@ export function ConformationPanel() {
     toggleConformationVisibility,
   } = useMolStore();
 
+  const listRef = useRef<HTMLDivElement>(null);
+  const [focused, setFocused] = useState(false);
+
   const sortedConformations = ligand
     ? [...ligand.conformations]
         .map((conf, idx) => ({ conf, idx }))
@@ -23,6 +27,40 @@ export function ConformationPanel() {
       )
     : null;
 
+  const selectionStats = useMemo(() => {
+    if (visibleConformations.length === 0) return null;
+    const selectedConfs = visibleConformations.map(
+      (idx) => ligand?.conformations[idx]
+    ).filter(Boolean);
+    if (selectedConfs.length === 0) return null;
+    const avgEnergy = selectedConfs.reduce(
+      (sum, conf) => sum + conf!.bindingEnergy,
+      0
+    ) / selectedConfs.length;
+    return {
+      count: selectedConfs.length,
+      avgEnergy,
+    };
+  }, [visibleConformations, ligand]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!focused || !ligand) return;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const nextIdx = Math.max(0, currentConformation - 1);
+        setCurrentConformation(nextIdx);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const nextIdx = Math.min(ligand.conformations.length - 1, currentConformation + 1);
+        setCurrentConformation(nextIdx);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [focused, currentConformation, ligand, setCurrentConformation]);
+
   return (
     <div className="p-4 bg-gray-800 rounded-lg mb-4">
       <h3 className="text-white text-lg font-bold mb-3">配体构象</h3>
@@ -33,16 +71,29 @@ export function ConformationPanel() {
         </div>
       ) : (
         <>
+          {selectionStats && selectionStats.count > 1 && (
+            <div className="bg-blue-900 bg-opacity-50 p-2 rounded mb-3 text-sm">
+              <span className="text-blue-300">已选 {selectionStats.count} 个构象</span>
+              <span className="text-gray-400 ml-3">平均结合能: </span>
+              <span className="text-white font-mono">{selectionStats.avgEnergy.toFixed(2)}</span>
+            </div>
+          )}
+
           <div className="text-white text-sm mb-3">
             共 {ligand.conformations.length} 个构象，已显示 {visibleConformations.length} 个
           </div>
 
-          <div className="max-h-48 overflow-y-auto mb-4">
+          <div
+            ref={listRef}
+            tabIndex={0}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            className={`max-h-48 overflow-y-auto mb-4 outline-none ${focused ? 'ring-2 ring-blue-500 rounded' : ''}`}
+          >
             <table className="w-full text-sm">
               <thead className="text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
                 <tr>
                   <th className="text-left py-2">#</th>
-                  <th className="text-left py-2">构象</th>
                   <th className="text-right py-2">结合能</th>
                   <th className="text-right py-2">RMSD</th>
                 </tr>
@@ -54,7 +105,7 @@ export function ConformationPanel() {
                     onClick={() => setCurrentConformation(idx)}
                     className={`border-b border-gray-700 cursor-pointer transition-colors
                       ${currentConformation === idx
-                        ? 'bg-blue-600'
+                        ? 'bg-blue-600 text-white'
                         : 'hover:bg-gray-700'
                       }`}
                   >
@@ -68,19 +119,16 @@ export function ConformationPanel() {
                         }}
                         className="mr-2"
                       />
-                      {idx + 1}
-                    </td>
-                    <td className="py-2">
                       <span
                         className="inline-block w-3 h-3 rounded-full mr-2"
                         style={{ backgroundColor: CONFORMATION_COLORS[idx % CONFORMATION_COLORS.length] }}
                       />
-                      {conf.name || `构象 ${idx + 1}`}
+                      {idx + 1}
                     </td>
-                    <td className="py-2 text-right text-white">
+                    <td className="py-2 text-right font-mono">
                       {conf.bindingEnergy.toFixed(2)}
                     </td>
-                    <td className="py-2 text-right text-white">
+                    <td className="py-2 text-right font-mono">
                       {conf.rmsd !== null ? `${conf.rmsd.toFixed(2)}Å` : '-'}
                     </td>
                   </tr>
@@ -88,6 +136,12 @@ export function ConformationPanel() {
               </tbody>
             </table>
           </div>
+
+          {focused && (
+            <div className="text-xs text-gray-500 mb-3">
+              使用 ↑↓ 键切换构象
+            </div>
+          )}
 
           {rmsdMatrix && rmsdMatrix.matrix.length > 1 && (
             <div>

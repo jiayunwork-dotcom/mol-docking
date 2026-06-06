@@ -10,6 +10,8 @@ import type {
   Residue,
   Atom,
   RMSDMatrix,
+  RenderModeSettings,
+  ViewMode,
 } from '../types';
 import { detectInteractions } from '../analysis/interactionDetector';
 import { generateRMSDMatrix } from '../analysis/rmsdCalculator';
@@ -35,6 +37,8 @@ interface MolState {
   surfaceColoring: SurfaceColoring;
   surfaceOpacity: number;
   surfaceResolution: number;
+  wireframeHideHydrogens: boolean;
+  renderModeSettings: RenderModeSettings;
   visibleChains: Set<string>;
   visibleInteractionTypes: Set<InteractionType>;
   rmsdMatrix: RMSDMatrix | null;
@@ -46,6 +50,11 @@ interface MolState {
   error: string | null;
   warnings: string[];
   cameraTarget: { x: number; y: number; z: number };
+  flyToTarget: { x: number; y: number; z: number } | null;
+  flyToDistance: number | null;
+  viewMode: ViewMode;
+  clipDistance: number | null;
+  showOnlyNearbyResidues: boolean;
 }
 
 interface MolActions {
@@ -57,6 +66,7 @@ interface MolActions {
   setSurfaceColoring: (coloring: SurfaceColoring) => void;
   setSurfaceOpacity: (opacity: number) => void;
   setSurfaceResolution: (res: number) => void;
+  setWireframeHideHydrogens: (hide: boolean) => void;
   toggleChainVisibility: (chainId: string) => void;
   toggleChain: (chainId: string) => void;
   toggleInteractionType: (type: InteractionType) => void;
@@ -70,6 +80,13 @@ interface MolActions {
   clearSelectedAtoms: () => void;
   setHighlightedConformation: (index: number | null) => void;
   setCameraTarget: (target: { x: number; y: number; z: number }) => void;
+  flyTo: (target: { x: number; y: number; z: number }, distance?: number) => void;
+  setViewMode: (mode: ViewMode) => void;
+  setClipDistance: (distance: number | null) => void;
+  setShowOnlyNearbyResidues: (show: boolean) => void;
+  goToGlobalView: () => void;
+  goToPocketView: () => void;
+  goToLigandView: () => void;
   setLoading: (loading: boolean, message?: string) => void;
   setLoadingProgress: (progress: number) => void;
   setError: (error: string | null) => void;
@@ -85,6 +102,84 @@ const initialVisibleInteractions: Set<InteractionType> = new Set([
   'salt_bridge',
   'halogen_bond',
 ]);
+
+const initialRenderSettings: RenderModeSettings = {
+  surface: {
+    coloring: 'electrostatic',
+    opacity: 70,
+    resolution: 1.0,
+  },
+  wireframe: {
+    hideHydrogens: false,
+  },
+};
+
+function getProteinCenter(protein: Protein): { x: number; y: number; z: number } {
+  if (!protein || protein.atoms.length === 0) return { x: 0, y: 0, z: 0 };
+  const sum = protein.atoms.reduce(
+    (acc, atom) => ({
+      x: acc.x + atom.x,
+      y: acc.y + atom.y,
+      z: acc.z + atom.z,
+    }),
+    { x: 0, y: 0, z: 0 }
+  );
+  return {
+    x: sum.x / protein.atoms.length,
+    y: sum.y / protein.atoms.length,
+    z: sum.z / protein.atoms.length,
+  };
+}
+
+function getProteinRadius(protein: Protein, center: { x: number; y: number; z: number }): number {
+  if (!protein || protein.atoms.length === 0) return 30;
+  let maxDist = 0;
+  protein.atoms.forEach((atom) => {
+    const dx = atom.x - center.x;
+    const dy = atom.y - center.y;
+    const dz = atom.z - center.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (dist > maxDist) maxDist = dist;
+  });
+  return maxDist + 10;
+}
+
+function getLigandCenter(ligand: Ligand, conformationIdx: number): { x: number; y: number; z: number } {
+  const conf = ligand.conformations[conformationIdx];
+  if (!conf || conf.atoms.length === 0) return { x: 0, y: 0, z: 0 };
+  const sum = conf.atoms.reduce(
+    (acc, atom) => ({
+      x: acc.x + atom.x,
+      y: acc.y + atom.y,
+      z: acc.z + atom.z,
+    }),
+    { x: 0, y: 0, z: 0 }
+  );
+  return {
+    x: sum.x / conf.atoms.length,
+    y: sum.y / conf.atoms.length,
+    z: sum.z / conf.atoms.length,
+  };
+}
+
+function getPocketCenter(pocketResidues: Residue[]): { x: number; y: number; z: number } {
+  if (pocketResidues.length === 0) return { x: 0, y: 0, z: 0 };
+  const atoms = pocketResidues.flatMap((r) => r.atoms);
+  if (atoms.length === 0) return { x: 0, y: 0, z: 0 };
+  const sum = atoms.reduce(
+    (acc, atom) => ({
+      x: acc.x + atom.x,
+      y: acc.y + atom.y,
+      z: acc.z + atom.z,
+    }),
+    { x: 0, y: 0, z: 0 }
+  );
+  return {
+    x: sum.x / atoms.length,
+    y: sum.y / atoms.length,
+    z: sum.z / atoms.length,
+  };
+}
 
 export const useMolStore = create<MolState & MolActions>((set, get) => ({
   protein: null,
@@ -102,6 +197,8 @@ export const useMolStore = create<MolState & MolActions>((set, get) => ({
   surfaceColoring: 'electrostatic',
   surfaceOpacity: 70,
   surfaceResolution: 1.0,
+  wireframeHideHydrogens: false,
+  renderModeSettings: initialRenderSettings,
   visibleChains: new Set(),
   visibleInteractionTypes: initialVisibleInteractions,
   rmsdMatrix: null,
@@ -113,6 +210,11 @@ export const useMolStore = create<MolState & MolActions>((set, get) => ({
   error: null,
   warnings: [],
   cameraTarget: { x: 0, y: 0, z: 0 },
+  flyToTarget: null,
+  flyToDistance: null,
+  viewMode: 'global',
+  clipDistance: null,
+  showOnlyNearbyResidues: false,
 
   setProtein: (protein) => {
     const visibleChains = new Set<string>();
@@ -150,10 +252,74 @@ export const useMolStore = create<MolState & MolActions>((set, get) => ({
     set({ visibleConformations: Array.from(newVisible) });
   },
 
-  setProteinRepresentation: (repr) => set({ proteinRepresentation: repr }),
-  setSurfaceColoring: (coloring) => set({ surfaceColoring: coloring }),
-  setSurfaceOpacity: (opacity) => set({ surfaceOpacity: Math.max(0, Math.min(100, opacity)) }),
-  setSurfaceResolution: (res) => set({ surfaceResolution: Math.max(0.5, Math.min(2.0, res)) }),
+  setProteinRepresentation: (repr) => {
+    const { renderModeSettings } = get();
+    if (repr === 'surface') {
+      set({
+        proteinRepresentation: repr,
+        surfaceColoring: renderModeSettings.surface.coloring,
+        surfaceOpacity: renderModeSettings.surface.opacity,
+        surfaceResolution: renderModeSettings.surface.resolution,
+      });
+    } else if (repr === 'wireframe') {
+      set({
+        proteinRepresentation: repr,
+        wireframeHideHydrogens: renderModeSettings.wireframe.hideHydrogens,
+      });
+    } else {
+      set({ proteinRepresentation: repr });
+    }
+  },
+  setSurfaceColoring: (coloring) => {
+    set({ surfaceColoring: coloring });
+    set((state) => ({
+      renderModeSettings: {
+        ...state.renderModeSettings,
+        surface: {
+          ...state.renderModeSettings.surface,
+          coloring,
+        },
+      },
+    }));
+  },
+  setSurfaceOpacity: (opacity) => {
+    const clampedOpacity = Math.max(0, Math.min(100, opacity));
+    set({ surfaceOpacity: clampedOpacity });
+    set((state) => ({
+      renderModeSettings: {
+        ...state.renderModeSettings,
+        surface: {
+          ...state.renderModeSettings.surface,
+          opacity: clampedOpacity,
+        },
+      },
+    }));
+  },
+  setSurfaceResolution: (res) => {
+    const clampedRes = Math.max(0.5, Math.min(2.0, res));
+    set({ surfaceResolution: clampedRes });
+    set((state) => ({
+      renderModeSettings: {
+        ...state.renderModeSettings,
+        surface: {
+          ...state.renderModeSettings.surface,
+          resolution: clampedRes,
+        },
+      },
+    }));
+  },
+  setWireframeHideHydrogens: (hide) => {
+    set({ wireframeHideHydrogens: hide });
+    set((state) => ({
+      renderModeSettings: {
+        ...state.renderModeSettings,
+        wireframe: {
+          ...state.renderModeSettings.wireframe,
+          hideHydrogens: hide,
+        },
+      },
+    }));
+  },
 
   toggleChainVisibility: (chainId) => {
     const { visibleChains } = get();
@@ -293,6 +459,53 @@ export const useMolStore = create<MolState & MolActions>((set, get) => ({
 
   setCameraTarget: (target) => set({ cameraTarget: target }),
 
+  flyTo: (target, distance) => {
+    set({ flyToTarget: target, flyToDistance: distance || null });
+  },
+
+  setViewMode: (mode) => set({ viewMode: mode }),
+  setClipDistance: (distance) => set({ clipDistance: distance }),
+  setShowOnlyNearbyResidues: (show) => set({ showOnlyNearbyResidues: show }),
+
+  goToGlobalView: () => {
+    const { protein, flyTo } = get();
+    if (!protein) return;
+    const center = getProteinCenter(protein);
+    const radius = getProteinRadius(protein, center);
+    set({
+      viewMode: 'global',
+      clipDistance: null,
+      showOnlyNearbyResidues: false,
+    });
+    flyTo(center, radius);
+  },
+
+  goToPocketView: () => {
+    const { pocketResidues, protein, flyTo } = get();
+    if (pocketResidues.length === 0 && !protein) return;
+    const center = pocketResidues.length > 0
+      ? getPocketCenter(pocketResidues)
+      : getProteinCenter(protein!);
+    set({
+      viewMode: 'pocket',
+      clipDistance: 15,
+      showOnlyNearbyResidues: false,
+    });
+    flyTo(center, 25);
+  },
+
+  goToLigandView: () => {
+    const { ligand, currentConformation, flyTo } = get();
+    if (!ligand) return;
+    const center = getLigandCenter(ligand, currentConformation);
+    set({
+      viewMode: 'ligand',
+      clipDistance: null,
+      showOnlyNearbyResidues: true,
+    });
+    flyTo(center, 15);
+  },
+
   setLoading: (loading, message = '') => set({ loading, isLoading: loading, loadingMessage: message, loadingProgress: 0 }),
   setLoadingProgress: (progress) => set({ loadingProgress: progress }),
   setError: (error) => set({ error }),
@@ -311,10 +524,21 @@ export const useMolStore = create<MolState & MolActions>((set, get) => ({
       measurements: [],
       selectedAtoms: [],
       measurementMode: 'none',
+      proteinRepresentation: 'cartoon',
+      surfaceColoring: 'electrostatic',
+      surfaceOpacity: 70,
+      surfaceResolution: 1.0,
+      wireframeHideHydrogens: false,
+      renderModeSettings: initialRenderSettings,
       rmsdMatrix: null,
       highlightedConformation: null,
       error: null,
       warnings: [],
+      flyToTarget: null,
+      flyToDistance: null,
+      viewMode: 'global',
+      clipDistance: null,
+      showOnlyNearbyResidues: false,
     });
   },
 }));

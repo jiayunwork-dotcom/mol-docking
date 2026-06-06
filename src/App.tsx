@@ -7,10 +7,11 @@ import { ConformationPanel } from './components/ConformationPanel';
 import { Interaction2DView } from './components/Interaction2DView';
 import { MeasurementPanel } from './components/MeasurementPanel';
 import { ExportPanel } from './components/ExportPanel';
+import { ViewPresets } from './components/ViewPresets';
 import { useMolStore } from './store/molStore';
 
 function App() {
-  const { loading, protein, ligand } = useMolStore();
+  const { loading, protein, ligand, warnings, clearWarnings } = useMolStore();
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [activeTab, setActiveTab] = useState<'render' | 'interactions' | 'conformations' | '2dview' | 'measure' | 'export'>('render');
 
@@ -63,6 +64,23 @@ function App() {
         </div>
       </header>
 
+      {warnings.length > 0 && (
+        <div className="bg-yellow-600 border-b border-yellow-700 px-6 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-yellow-200 text-sm">⚠️</span>
+              <span className="text-white text-sm">{warnings[0]}</span>
+            </div>
+            <button
+              onClick={clearWarnings}
+              className="text-yellow-200 hover:text-white text-sm"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-1 overflow-hidden">
         <div className="w-80 bg-gray-850 border-r border-gray-700 overflow-y-auto p-4 flex-shrink-0" style={{ backgroundColor: '#1f2937' }}>
           <FileUploadPanel />
@@ -84,7 +102,12 @@ function App() {
             ))}
           </div>
 
-          {activeTab === 'render' && <RenderControlPanel />}
+          {activeTab === 'render' && (
+            <>
+              <ViewPresets />
+              <RenderControlPanel />
+            </>
+          )}
           {activeTab === 'interactions' && <InteractionPanel />}
           {activeTab === 'conformations' && <ConformationPanel />}
           {activeTab === '2dview' && <Interaction2DView />}

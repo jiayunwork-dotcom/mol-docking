@@ -80,31 +80,53 @@ function computeGasteigerCharges(atoms: Atom[], bonds: Bond[]): void {
   }
 }
 
-export async function parseSDF(content: string, filename: string, maxConformations: number = 20): Promise<Ligand> {
-  const blocks = content.split(/\$\$\$\$/);
+export async function parseSDF(content: string, filename: string, maxConformations: number = 20): Promise<{ ligand: Ligand; wasTruncated: boolean }> {
+  const blocks = content.split(/\$\$\$\$/).filter(b => b.trim().length > 0);
+  
+  if (blocks.length === 0) {
+    throw new Error('SDF文件为空，无法解析任何有效构象');
+  }
+
+  const totalBlocks = blocks.length;
+  const wasTruncated = totalBlocks > maxConformations;
+  const numConfs = Math.min(totalBlocks, maxConformations);
+
   const conformations: LigandConformation[] = [];
-  const numConfs = Math.min(blocks.length - 1, maxConformations);
+  let validConfsCount = 0;
 
   for (let confIdx = 0; confIdx < numConfs; confIdx++) {
     const block = blocks[confIdx];
     const lines = block.trim().split('\n');
+    
     if (lines.length < 4) continue;
 
     const header = lines[0].trim();
     const countsLine = lines[3];
+    
+    if (countsLine.length < 6) continue;
+    
     const atomCount = parseInt(countsLine.substring(0, 3).trim());
     const bondCount = parseInt(countsLine.substring(3, 6).trim());
+
+    if (isNaN(atomCount) || atomCount <= 0) continue;
 
     const atoms: Atom[] = [];
     const bonds: Bond[] = [];
     let atomId = 0;
+    let hasValidCoordinates = false;
 
-    for (let i = 4; i < 4 + atomCount; i++) {
+    for (let i = 4; i < 4 + atomCount && i < lines.length; i++) {
       const line = lines[i];
-      if (!line) continue;
+      if (!line || line.length < 34) continue;
+      
       const x = parseFloat(line.substring(0, 10));
       const y = parseFloat(line.substring(10, 20));
       const z = parseFloat(line.substring(20, 30));
+      
+      if (isNaN(x) || isNaN(y) || isNaN(z)) continue;
+      if (x === 0 && y === 0 && z === 0) continue;
+      
+      hasValidCoordinates = true;
       const element = parseElement(line.substring(31, 34));
       const formalCharge = parseInt(line.substring(36, 39)) || 0;
 
@@ -123,24 +145,30 @@ export async function parseSDF(content: string, filename: string, maxConformatio
       atomId++;
     }
 
-    for (let i = 4 + atomCount; i < 4 + atomCount + bondCount; i++) {
+    if (!hasValidCoordinates || atoms.length === 0) continue;
+
+    for (let i = 4 + atomCount; i < 4 + atomCount + bondCount && i < lines.length; i++) {
       const line = lines[i];
-      if (!line) continue;
+      if (!line || line.length < 9) continue;
       const atom1 = parseInt(line.substring(0, 3).trim()) - 1;
       const atom2 = parseInt(line.substring(3, 6).trim()) - 1;
       const order = parseInt(line.substring(6, 9).trim()) as 1 | 2 | 3 | 4;
 
-      bonds.push({ atom1, atom2, order });
+      if (!isNaN(atom1) && !isNaN(atom2) && !isNaN(order)) {
+        bonds.push({ atom1, atom2, order });
+      }
     }
 
     let bindingAffinity = 0;
-    let rmsd = 0;
+    let rmsd: number | null = null;
     for (let i = 4 + atomCount + bondCount; i < lines.length; i++) {
       const line = lines[i];
       if (line.includes('> <SCORE>') || line.includes('> <docking_score>') || line.includes('> <binding_affinity>')) {
-        bindingAffinity = parseFloat(lines[i + 1]?.trim() || '0');
+        const val = parseFloat(lines[i + 1]?.trim() || '0');
+        if (!isNaN(val)) bindingAffinity = val;
       } else if (line.includes('> <RMSD>') || line.includes('> <rmsd>')) {
-        rmsd = parseFloat(lines[i + 1]?.trim() || '0');
+        const val = parseFloat(lines[i + 1]?.trim() || '');
+        if (!isNaN(val)) rmsd = val;
       }
     }
 
@@ -148,30 +176,47 @@ export async function parseSDF(content: string, filename: string, maxConformatio
     computeGasteigerCharges(atoms, bonds);
 
     conformations.push({
-      id: confIdx,
+      id: validConfsCount,
       atoms,
       bonds,
       bindingEnergy: bindingAffinity,
-      rmsd: rmsd as number | null,
-      name: `${header || 'Pose'} ${confIdx + 1}`,
+      rmsd,
+      name: `${header || 'Pose'} ${validConfsCount + 1}`,
     });
+    validConfsCount++;
+  }
+
+  if (conformations.length === 0) {
+    throw new Error('SDF文件格式错误，无法解析出有效原子坐标，请检查文件格式');
   }
 
   return {
-    id: `lig_${Date.now()}`,
-    name: filename.replace(/\.(sdf|sd)$/i, ''),
-    conformations: conformations.sort((a, b) => a.bindingEnergy - b.bindingEnergy),
-    currentConformation: 0,
-    filename,
-    format: 'sdf',
-    visibleConformations: [0],
+    wasTruncated,
+    ligand: {
+      id: `lig_${Date.now()}`,
+      name: filename.replace(/\.(sdf|sd)$/i, ''),
+      conformations: conformations.sort((a, b) => a.bindingEnergy - b.bindingEnergy),
+      currentConformation: 0,
+      filename,
+      format: 'sdf',
+      visibleConformations: [0],
+    },
   };
 }
 
-export async function parseMOL2(content: string, filename: string, maxConformations: number = 20): Promise<Ligand> {
+export async function parseMOL2(content: string, filename: string, maxConformations: number = 20): Promise<{ ligand: Ligand; wasTruncated: boolean }> {
   const blocks = content.split(/@<TRIPOS>MOLECULE/).filter(b => b.trim());
+  
+  if (blocks.length === 0) {
+    throw new Error('MOL2文件为空，无法解析任何有效构象');
+  }
+
+  const totalBlocks = blocks.length;
+  const wasTruncated = totalBlocks > maxConformations;
+  const numConfs = Math.min(totalBlocks, maxConformations);
+
   const conformations: LigandConformation[] = [];
-  const numConfs = Math.min(blocks.length, maxConformations);
+  let validConfsCount = 0;
 
   for (let confIdx = 0; confIdx < numConfs; confIdx++) {
     const block = blocks[confIdx];
@@ -186,6 +231,8 @@ export async function parseMOL2(content: string, filename: string, maxConformati
     const atomCount = parseInt(counts[0] || '0');
     const bondCount = parseInt(counts[1] || '0');
 
+    if (isNaN(atomCount) || atomCount <= 0) continue;
+
     const atoms: Atom[] = [];
     const bonds: Bond[] = [];
 
@@ -194,6 +241,7 @@ export async function parseMOL2(content: string, filename: string, maxConformati
     i++;
 
     let atomId = 0;
+    let hasValidCoordinates = false;
     for (let j = 0; j < atomCount && i < lines.length; j++, i++) {
       const parts = lines[i].trim().split(/\s+/);
       if (parts.length < 6) continue;
@@ -201,6 +249,11 @@ export async function parseMOL2(content: string, filename: string, maxConformati
       const x = parseFloat(parts[2]);
       const y = parseFloat(parts[3]);
       const z = parseFloat(parts[4]);
+      
+      if (isNaN(x) || isNaN(y) || isNaN(z)) continue;
+      if (x === 0 && y === 0 && z === 0) continue;
+      
+      hasValidCoordinates = true;
       const typeParts = parts[5].split('.');
       const element = parseElement(typeParts[0]);
       const formalCharge = parts.length > 8 ? parseInt(parts[8]) || 0 : 0;
@@ -220,6 +273,8 @@ export async function parseMOL2(content: string, filename: string, maxConformati
       atomId++;
     }
 
+    if (!hasValidCoordinates || atoms.length === 0) continue;
+
     while (i < lines.length && !lines[i].includes('@<TRIPOS>BOND')) i++;
     i++;
 
@@ -234,11 +289,13 @@ export async function parseMOL2(content: string, filename: string, maxConformati
       else if (orderStr === '3') order = 3;
       else if (orderStr === 'ar' || orderStr === 'AR' || orderStr === 'Aromatic') order = 4;
 
-      bonds.push({ atom1, atom2, order });
+      if (!isNaN(atom1) && !isNaN(atom2)) {
+        bonds.push({ atom1, atom2, order });
+      }
     }
 
     let bindingAffinity = 0;
-    let rmsd = 0;
+    let rmsd: number | null = null;
     while (i < lines.length) {
       const line = lines[i];
       if (line.includes('SCORE') || line.includes('docking_score') || line.includes('binding_affinity')) {
@@ -255,22 +312,30 @@ export async function parseMOL2(content: string, filename: string, maxConformati
     computeGasteigerCharges(atoms, bonds);
 
     conformations.push({
-      id: confIdx,
+      id: validConfsCount,
       atoms,
       bonds,
       bindingEnergy: bindingAffinity,
-      rmsd: rmsd as number | null,
+      rmsd,
       name,
     });
+    validConfsCount++;
+  }
+
+  if (conformations.length === 0) {
+    throw new Error('MOL2文件格式错误，无法解析出有效原子坐标，请检查文件格式');
   }
 
   return {
-    id: `lig_${Date.now()}`,
-    name: filename.replace(/\.(mol2|ml2)$/i, ''),
-    conformations: conformations.sort((a, b) => a.bindingEnergy - b.bindingEnergy),
-    currentConformation: 0,
-    filename,
-    format: 'mol2',
-    visibleConformations: [0],
+    wasTruncated,
+    ligand: {
+      id: `lig_${Date.now()}`,
+      name: filename.replace(/\.(mol2|ml2)$/i, ''),
+      conformations: conformations.sort((a, b) => a.bindingEnergy - b.bindingEnergy),
+      currentConformation: 0,
+      filename,
+      format: 'mol2',
+      visibleConformations: [0],
+    },
   };
 }

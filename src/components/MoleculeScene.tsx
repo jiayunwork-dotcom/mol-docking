@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useMemo, useRef, useEffect, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -28,6 +28,7 @@ function SceneContent() {
     surfaceColoring,
     surfaceOpacity,
     surfaceResolution,
+    wireframeHideHydrogens,
     visibleChains,
     interactions,
     pocketResidues,
@@ -38,10 +39,124 @@ function SceneContent() {
     selectAtom,
     setCameraTarget,
     cameraTarget,
+    flyToTarget,
+    flyToDistance,
+    clipDistance,
+    showOnlyNearbyResidues,
   } = useMolStore();
 
   const { camera, raycaster, gl, scene } = useThree();
+  const controlsRef = useRef<any>(null);
   const textLabelsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const animationRef = useRef<{
+    startPos: THREE.Vector3;
+    startTarget: THREE.Vector3;
+    endPos: THREE.Vector3;
+    endTarget: THREE.Vector3;
+    startTime: number;
+    duration: number;
+  } | null>(null);
+
+  const { filteredProtein } = useMemo(() => {
+    let center = { x: 0, y: 0, z: 0 };
+    let filteredP = protein;
+
+    if (ligand && showOnlyNearbyResidues && protein) {
+      const conf = ligand.conformations[currentConformation];
+      if (conf) {
+        const ligCenter = conf.atoms.reduce(
+          (acc, a) => ({ x: acc.x + a.x, y: acc.y + a.y, z: acc.z + a.z }),
+          { x: 0, y: 0, z: 0 }
+        );
+        center = {
+          x: ligCenter.x / conf.atoms.length,
+          y: ligCenter.y / conf.atoms.length,
+          z: ligCenter.z / conf.atoms.length,
+        };
+
+        const nearResidueIds = new Set<number>();
+        protein.chains.forEach((chain) => {
+          chain.residues.forEach((res) => {
+            if (res.isMissing) return;
+            for (const atom of res.atoms) {
+              const dx = atom.x - center.x;
+              const dy = atom.y - center.y;
+              const dz = atom.z - center.z;
+              const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+              if (dist <= 5) {
+                nearResidueIds.add(res.id);
+                break;
+              }
+            }
+          });
+        });
+
+        const filteredAtoms = protein.atoms.filter((atom) => {
+          const dx = atom.x - center.x;
+          const dy = atom.y - center.y;
+          const dz = atom.z - center.z;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          return dist <= 5 || nearResidueIds.has(atom.residueId);
+        });
+
+        const filteredChains = new Map(protein.chains);
+        filteredChains.forEach((chain, chainId) => {
+          const filteredResidues = chain.residues.filter((r) => nearResidueIds.has(r.id));
+          filteredChains.set(chainId, { ...chain, residues: filteredResidues });
+        });
+
+        filteredP = {
+          ...protein,
+          atoms: filteredAtoms,
+          chains: filteredChains,
+        };
+      }
+    } else if (clipDistance !== null && pocketResidues.length > 0) {
+      const pocketAtoms = pocketResidues.flatMap((r) => r.atoms);
+      if (pocketAtoms.length > 0) {
+        const pCenter = pocketAtoms.reduce(
+          (acc, a) => ({ x: acc.x + a.x, y: acc.y + a.y, z: acc.z + a.z }),
+          { x: 0, y: 0, z: 0 }
+        );
+        center = {
+          x: pCenter.x / pocketAtoms.length,
+          y: pCenter.y / pocketAtoms.length,
+          z: pCenter.z / pocketAtoms.length,
+        };
+
+        const filteredAtoms = protein?.atoms.filter((atom) => {
+          const dx = atom.x - center.x;
+          const dy = atom.y - center.y;
+          const dz = atom.z - center.z;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          return dist <= clipDistance;
+        }) || [];
+
+        if (protein) {
+          const nearResidueIds = new Set<number>();
+          filteredAtoms.forEach((a) => nearResidueIds.add(a.residueId));
+
+          const filteredChains = new Map(protein.chains);
+          filteredChains.forEach((chain, chainId) => {
+            const filteredResidues = chain.residues.filter((r) => nearResidueIds.has(r.id));
+            filteredChains.set(chainId, { ...chain, residues: filteredResidues });
+          });
+
+          filteredP = {
+            ...protein,
+            atoms: filteredAtoms,
+            chains: filteredChains,
+          };
+        }
+      }
+    }
+
+    return {
+      filteredProtein: filteredP,
+    };
+  }, [protein, ligand, currentConformation, clipDistance, showOnlyNearbyResidues, pocketResidues]);
+
+  const displayProtein = filteredProtein || protein;
 
   const handleClick = useCallback(() => {
     if (measurementMode === 'none') {
@@ -78,12 +193,46 @@ function SceneContent() {
     }
   }, [raycaster, scene.children, camera, setCameraTarget]);
 
+  useEffect(() => {
+    if (flyToTarget && controlsRef.current) {
+      const target = new THREE.Vector3(flyToTarget.x, flyToTarget.y, flyToTarget.z);
+      const direction = new THREE.Vector3().subVectors(camera.position, new THREE.Vector3(cameraTarget.x, cameraTarget.y, cameraTarget.z)).normalize();
+      const distance = flyToDistance || direction.length();
+      const newPos = target.clone().add(direction.multiplyScalar(distance));
+
+      animationRef.current = {
+        startPos: camera.position.clone(),
+        startTarget: new THREE.Vector3(cameraTarget.x, cameraTarget.y, cameraTarget.z),
+        endPos: newPos,
+        endTarget: target,
+        startTime: performance.now(),
+        duration: 500,
+      };
+    }
+  }, [flyToTarget, flyToDistance]);
+
   useFrame(() => {
+    if (animationRef.current && controlsRef.current) {
+      const { startPos, startTarget, endPos, endTarget, startTime, duration } = animationRef.current;
+      const elapsed = performance.now() - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      const easeT = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+      camera.position.lerpVectors(startPos, endPos, easeT);
+      controlsRef.current.target.lerpVectors(startTarget, endTarget, easeT);
+      setCameraTarget({ x: controlsRef.current.target.x, y: controlsRef.current.target.y, z: controlsRef.current.target.z });
+
+      if (t >= 1) {
+        animationRef.current = null;
+        useMolStore.setState({ flyToTarget: null, flyToDistance: null });
+      }
+    }
+
     const container = gl.domElement.parentElement;
     if (container && container.parentElement) {
       const labelsContainer = container.parentElement.querySelector('[data-labels]') as HTMLDivElement | null;
       if (labelsContainer) {
-        measurements.forEach((meas) => {
+        measurements.forEach((meas, measIdx) => {
           const key = meas.id;
           let label = textLabelsRef.current.get(key);
           if (!label) {
@@ -106,7 +255,7 @@ function SceneContent() {
           const rect = container.getBoundingClientRect();
           label.style.left = `${(pos.x * 0.5 + 0.5) * rect.width}px`;
           label.style.top = `${(-pos.y * 0.5 + 0.5) * rect.height}px`;
-          label.textContent = formatMeasurement(meas);
+          label.textContent = `#${measIdx + 1} ${formatMeasurement(meas)}`;
         });
 
         const toRemove: string[] = [];
@@ -139,6 +288,7 @@ function SceneContent() {
       <pointLight position={[0, 0, 0]} intensity={0.5} />
 
       <OrbitControls
+        ref={controlsRef}
         target={[cameraTarget.x, cameraTarget.y, cameraTarget.z]}
         enableDamping
         dampingFactor={0.05}
@@ -146,17 +296,17 @@ function SceneContent() {
         maxDistance={200}
       />
 
-      {protein && proteinRepresentation === 'cartoon' && (
-        <ProteinCartoon protein={protein} visibleChains={visibleChains} />
+      {displayProtein && proteinRepresentation === 'cartoon' && (
+        <ProteinCartoon protein={displayProtein} visibleChains={visibleChains} />
       )}
 
-      {protein && proteinRepresentation === 'wireframe' && (
-        <ProteinWireframe protein={protein} visibleChains={visibleChains} />
+      {displayProtein && proteinRepresentation === 'wireframe' && (
+        <ProteinWireframe protein={displayProtein} visibleChains={visibleChains} hideHydrogens={wireframeHideHydrogens} />
       )}
 
-      {protein && proteinRepresentation === 'surface' && (
+      {displayProtein && proteinRepresentation === 'surface' && (
         <MolecularSurface
-          protein={protein}
+          protein={displayProtein}
           pocketResidues={pocketResidues}
           visibleChains={visibleChains}
           coloring={surfaceColoring}

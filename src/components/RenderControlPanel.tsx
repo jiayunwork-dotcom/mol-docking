@@ -11,6 +11,8 @@ export function RenderControlPanel() {
     setSurfaceOpacity,
     surfaceResolution,
     setSurfaceResolution,
+    wireframeHideHydrogens,
+    setWireframeHideHydrogens,
     visibleChains,
     toggleChain,
   } = useMolStore();
@@ -96,6 +98,20 @@ export function RenderControlPanel() {
               </div>
             </div>
           </>
+        )}
+
+        {proteinRepresentation === 'wireframe' && (
+          <div>
+            <label className="flex items-center gap-2 text-white text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={wireframeHideHydrogens}
+                onChange={(e) => setWireframeHideHydrogens(e.target.checked)}
+                className="w-4 h-4 rounded"
+              />
+              隐藏氢原子
+            </label>
+          </div>
         )}
 
         {chains.length > 0 && (

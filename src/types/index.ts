@@ -6,6 +6,19 @@ export type ProteinRepresentation = 'cartoon' | 'surface' | 'wireframe';
 
 export type SurfaceColoring = 'electrostatic' | 'hydrophobic' | 'hbond';
 
+export type ViewMode = 'global' | 'pocket' | 'ligand';
+
+export interface RenderModeSettings {
+  surface: {
+    coloring: SurfaceColoring;
+    opacity: number;
+    resolution: number;
+  };
+  wireframe: {
+    hideHydrogens: boolean;
+  };
+}
+
 export type InteractionType = 'hydrogen_bond' | 'hydrophobic' | 'pi_pi' | 'salt_bridge' | 'halogen_bond';
 
 export interface Atom {
