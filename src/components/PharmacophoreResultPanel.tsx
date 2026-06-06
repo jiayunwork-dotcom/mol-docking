@@ -69,7 +69,7 @@ export function PharmacophoreResultPanel() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4 mb-4">
+      <div className="grid grid-cols-5 gap-4 mb-4">
         <div className="bg-gray-700 rounded-lg p-3">
           <p className="text-gray-400 text-xs mb-1">基础分</p>
           <p className={`text-xl font-bold ${
@@ -97,6 +97,17 @@ export function PharmacophoreResultPanel() {
           </p>
         </div>
         <div className="bg-gray-700 rounded-lg p-3">
+          <p className="text-gray-400 text-xs mb-1">距离约束惩罚</p>
+          <p className={`text-xl font-bold ${
+            selectedResult.distanceConstraintPenalty < 0 ? 'text-red-400' : 'text-gray-400'
+          }`}>
+            {selectedResult.distanceConstraintPenalty > 0 ? '+' : ''}{selectedResult.distanceConstraintPenalty}
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            违反约束: {selectedResult.distanceConstraintViolations} 条
+          </p>
+        </div>
+        <div className="bg-gray-700 rounded-lg p-3">
           <p className="text-gray-400 text-xs mb-1">最终得分</p>
           <p className={`text-2xl font-bold ${
             selectedResult.finalScore > 0 ? 'text-green-400' :
@@ -105,7 +116,9 @@ export function PharmacophoreResultPanel() {
             {selectedResult.finalScore > 0 ? '+' : ''}{selectedResult.finalScore}
           </p>
           <p className="text-xs text-gray-500 mt-1">
-            基础分 {selectedResult.baseScore} {selectedResult.excludedVolumePenalty >= 0 ? '+' : ''} {selectedResult.excludedVolumePenalty}
+            基础分 {selectedResult.baseScore} 
+            {selectedResult.excludedVolumePenalty >= 0 ? '+' : ''} {selectedResult.excludedVolumePenalty}
+            {selectedResult.distanceConstraintPenalty >= 0 ? '+' : ''} {selectedResult.distanceConstraintPenalty}
           </p>
         </div>
         <div className="bg-gray-700 rounded-lg p-3">

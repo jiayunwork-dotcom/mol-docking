@@ -1,13 +1,24 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import type { PharmacophoreFeature, ExcludedVolume, ScoringResult, FeatureMatch, CandidateMolecule, Atom, Bond } from '../types';
-import { PHARMACOPHORE_COLORS } from '../types';
+import type {
+  PharmacophoreFeature,
+  ExcludedVolume,
+  ScoringResult,
+  FeatureMatch,
+  CandidateMolecule,
+  Atom,
+  Bond,
+  DistanceConstraint,
+} from '../types';
+import { PHARMACOPHORE_COLORS, CANDIDATE_COLORS } from '../types';
 
 interface PharmacophoreFeaturesProps {
   features: PharmacophoreFeature[];
   showFeatures: boolean;
   selectedResult?: ScoringResult | null;
   showCandidateMolecule?: boolean;
+  selectedFeatureIds?: string[];
+  distanceConstraints?: DistanceConstraint[];
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -26,6 +37,8 @@ export function PharmacophoreFeatures({
   showFeatures,
   selectedResult,
   showCandidateMolecule = true,
+  selectedFeatureIds = [],
+  distanceConstraints = [],
 }: PharmacophoreFeaturesProps) {
   const matchMap = useMemo(() => {
     if (!selectedResult) return new Map<string, FeatureMatch>();
@@ -44,6 +57,10 @@ export function PharmacophoreFeatures({
     return map;
   }, [selectedResult, showCandidateMolecule]);
 
+  const featureMap = useMemo(() => {
+    return new Map(features.map((f) => [f.id, f]));
+  }, [features]);
+
   if (!showFeatures) return null;
 
   return (
@@ -54,6 +71,7 @@ export function PharmacophoreFeatures({
         const isMatched = matchMap.has(feature.id);
         const match = matchMap.get(feature.id);
         const candidateFeature = match ? candidateFeatureMap.get(match.candidateFeatureId) : null;
+        const isSelected = selectedFeatureIds.includes(feature.id);
 
         return (
           <group key={feature.id} name={`feature-${feature.id}`}>
@@ -71,6 +89,18 @@ export function PharmacophoreFeatures({
               <sphereGeometry args={[feature.radius * 0.15, 16, 16]} />
               <meshBasicMaterial color={new THREE.Color(rgb.r, rgb.g, rgb.b)} />
             </mesh>
+
+            {isSelected && (
+              <mesh position={[feature.x, feature.y, feature.z]}>
+                <sphereGeometry args={[feature.radius * 1.1, 32, 32]} />
+                <meshBasicMaterial
+                  color="#ffffff"
+                  transparent
+                  opacity={0.3}
+                  side={THREE.DoubleSide}
+                />
+              </mesh>
+            )}
 
             {!feature.isRequired && (
               <mesh position={[feature.x, feature.y + feature.radius + 0.3, feature.z]}>
@@ -136,6 +166,41 @@ export function PharmacophoreFeatures({
           </group>
         );
       })}
+
+      {distanceConstraints.map((constraint) => {
+        const featA = featureMap.get(constraint.featureIdA);
+        const featB = featureMap.get(constraint.featureIdB);
+        if (!featA || !featB) return null;
+
+        const midX = (featA.x + featB.x) / 2;
+        const midY = (featA.y + featB.y) / 2;
+        const midZ = (featA.z + featB.z) / 2;
+
+        return (
+          <group key={constraint.id} name={`constraint-${constraint.id}`}>
+            <lineSegments>
+              <bufferGeometry
+                ref={(geo) => {
+                  if (geo) {
+                    const positions = new Float32Array([
+                      featA.x, featA.y, featA.z,
+                      featB.x, featB.y, featB.z,
+                    ]);
+                    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    geo.computeBoundingSphere();
+                  }
+                }}
+              />
+              <lineDashedMaterial color="#ffffff" linewidth={2} dashSize={0.2} gapSize={0.1} />
+            </lineSegments>
+
+            <mesh position={[midX, midY + 0.5, midZ]}>
+              <planeGeometry args={[1.5, 0.4]} />
+              <meshBasicMaterial color="#000000" transparent opacity={0.7} />
+            </mesh>
+          </group>
+        );
+      })}
     </group>
   );
 }
@@ -169,6 +234,125 @@ export function ExcludedVolumes({ volumes, showExcludedVolumes }: ExcludedVolume
   );
 }
 
+interface MultiCandidateDisplayProps {
+  results: ScoringResult[];
+  candidates: CandidateMolecule[];
+  show: boolean;
+  selectedIds: string[];
+}
+
+export function MultiCandidateDisplay({ results, candidates, show, selectedIds }: MultiCandidateDisplayProps) {
+  if (!show || selectedIds.length === 0) return null;
+
+  const selectedResults = results.filter((r) => selectedIds.includes(r.moleculeId));
+
+  return (
+    <group name="multi-candidate-molecules">
+      {selectedResults.map((result, idx) => {
+        const candidate = candidates.find((c) => c.id === result.moleculeId);
+        if (!candidate) return null;
+
+        const conf = candidate.conformations[result.bestConformationIndex];
+        if (!conf) return null;
+
+        const color = CANDIDATE_COLORS[idx % CANDIDATE_COLORS.length];
+        const rgb = hexToRgb(color);
+        const atomMap = new Map<number, Atom>();
+        conf.atoms.forEach((a, i) => atomMap.set(i, a));
+
+        return (
+          <group key={result.moleculeId} name={`candidate-${result.moleculeId}`}>
+            {conf.atoms.map((atom: Atom, atomIdx: number) => {
+              if (atom.isHydrogen) return null;
+              const radius = atom.element === 'C' ? 0.25 : 0.2;
+              return (
+                <mesh
+                  key={`atom-${atomIdx}`}
+                  position={[atom.x, atom.y, atom.z]}
+                >
+                  <sphereGeometry args={[radius, 16, 16]} />
+                  <meshStandardMaterial color={new THREE.Color(rgb.r, rgb.g, rgb.b)} />
+                </mesh>
+              );
+            })}
+
+            {conf.bonds.map((bond: Bond, bondIdx: number) => {
+              const a1 = atomMap.get(bond.atom1);
+              const a2 = atomMap.get(bond.atom2);
+              if (!a1 || !a2 || a1.isHydrogen || a2.isHydrogen) return null;
+
+              const midX = (a1.x + a2.x) / 2;
+              const midY = (a1.y + a2.y) / 2;
+              const midZ = (a1.z + a2.z) / 2;
+              const dx = a2.x - a1.x;
+              const dy = a2.y - a1.y;
+              const dz = a2.z - a1.z;
+              const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+              const order = bond.order;
+
+              const bondRadius = 0.08;
+
+              const quaternion = new THREE.Quaternion().setFromUnitVectors(
+                new THREE.Vector3(0, 1, 0),
+                new THREE.Vector3(dx, dy, dz).normalize()
+              );
+
+              if (order === 1) {
+                return (
+                  <mesh key={`bond-${bondIdx}`} position={[midX, midY, midZ]}>
+                    <cylinderGeometry args={[bondRadius, bondRadius, length, 8]} />
+                    <meshStandardMaterial color={new THREE.Color(rgb.r, rgb.g, rgb.b)} />
+                    <quaternion
+                      attach="quaternion"
+                      args={[...quaternion.toArray()]}
+                    />
+                  </mesh>
+                );
+              }
+
+              if (order === 2) {
+                const offset1 = new THREE.Vector3(0, 0.08, 0).applyQuaternion(quaternion.clone().invert());
+                const offset2 = new THREE.Vector3(0, -0.08, 0).applyQuaternion(quaternion.clone().invert());
+                return (
+                  <group key={`bond-${bondIdx}`}>
+                    <mesh position={[midX + offset1.x, midY + offset1.y, midZ + offset1.z]}>
+                      <cylinderGeometry args={[bondRadius * 0.6, bondRadius * 0.6, length, 6]} />
+                      <meshStandardMaterial color={new THREE.Color(rgb.r, rgb.g, rgb.b)} />
+                      <quaternion
+                        attach="quaternion"
+                        args={[...quaternion.toArray()]}
+                      />
+                    </mesh>
+                    <mesh position={[midX + offset2.x, midY + offset2.y, midZ + offset2.z]}>
+                      <cylinderGeometry args={[bondRadius * 0.6, bondRadius * 0.6, length, 6]} />
+                      <meshStandardMaterial color={new THREE.Color(rgb.r, rgb.g, rgb.b)} />
+                      <quaternion
+                        attach="quaternion"
+                        args={[...quaternion.toArray()]}
+                      />
+                    </mesh>
+                  </group>
+                );
+              }
+
+              return (
+                <mesh key={`bond-${bondIdx}`} position={[midX, midY, midZ]}>
+                  <cylinderGeometry args={[bondRadius, bondRadius, length, 8]} />
+                  <meshStandardMaterial color={new THREE.Color(rgb.r, rgb.g, rgb.b)} />
+                  <quaternion
+                    attach="quaternion"
+                    args={[...quaternion.toArray()]}
+                  />
+                </mesh>
+              );
+            })}
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 interface CandidateMoleculeDisplayProps {
   result: ScoringResult | null;
   candidates: CandidateMolecule[];
@@ -186,7 +370,7 @@ export function CandidateMoleculeDisplay({ result, candidates, show }: Candidate
 
   const atomMap = new Map<number, Atom>();
   conf.atoms.forEach((a, i) => atomMap.set(i, a));
-  
+
   const ELEMENT_COLORS: Record<string, string> = {
     C: '#808080', N: '#3333FF', O: '#FF3333', S: '#FFFF33', P: '#FFA500',
     F: '#00FF00', Cl: '#00FF00', Br: '#8B4513', I: '#9400D3', H: '#FFFFFF',
@@ -278,6 +462,104 @@ export function CandidateMoleculeDisplay({ result, candidates, show }: Candidate
               args={[...quaternion.toArray()]}
             />
           </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+interface CandidateLegendProps {
+  results: ScoringResult[];
+  selectedIds: string[];
+}
+
+export function CandidateLegend({ results, selectedIds }: CandidateLegendProps) {
+  if (selectedIds.length === 0) return null;
+
+  const selectedResults = results.filter((r) => selectedIds.includes(r.moleculeId));
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: '10px',
+        right: '10px',
+        background: 'rgba(0, 0, 0, 0.8)',
+        padding: '12px',
+        borderRadius: '8px',
+        zIndex: 100,
+        maxWidth: '200px',
+      }}
+    >
+      <p style={{ color: 'white', fontSize: '12px', fontWeight: 'bold', marginBottom: '8px' }}>
+        候选分子图例
+      </p>
+      {selectedResults.map((result, idx) => {
+        const color = CANDIDATE_COLORS[idx % CANDIDATE_COLORS.length];
+        return (
+          <div
+            key={result.moleculeId}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              marginBottom: '4px',
+            }}
+          >
+            <div
+              style={{
+                width: '16px',
+                height: '16px',
+                borderRadius: '50%',
+                backgroundColor: color,
+                flexShrink: 0,
+              }}
+            />
+            <span
+              style={{
+                color: 'white',
+                fontSize: '11px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={result.moleculeName}
+            >
+              {result.moleculeName}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+interface DistanceConstraintLabelProps {
+  constraints: DistanceConstraint[];
+  features: PharmacophoreFeature[];
+}
+
+export function DistanceConstraintLabels({ constraints, features }: DistanceConstraintLabelProps) {
+  const featureMap = new Map(features.map((f) => [f.id, f]));
+
+  return (
+    <group name="constraint-labels">
+      {constraints.map((constraint) => {
+        const featA = featureMap.get(constraint.featureIdA);
+        const featB = featureMap.get(constraint.featureIdB);
+        if (!featA || !featB) return null;
+
+        const midX = (featA.x + featB.x) / 2;
+        const midY = (featA.y + featB.y) / 2 + 0.5;
+        const midZ = (featA.z + featB.z) / 2;
+
+        return (
+          <group key={constraint.id} position={[midX, midY, midZ]}>
+            <mesh>
+              <planeGeometry args={[1.8, 0.5]} />
+              <meshBasicMaterial color="#000000" transparent opacity={0.8} />
+            </mesh>
+          </group>
         );
       })}
     </group>

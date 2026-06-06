@@ -4,6 +4,8 @@ import type {
   ScoringProgressData,
   ScoringCompleteData,
   WorkerMessage,
+  ScoringLogEntry,
+  ScoringLogData,
 } from '../types';
 import { scoreMultipleCandidates } from '../analysis/pharmacophoreScoring';
 
@@ -25,10 +27,10 @@ self.onmessage = function(e: MessageEvent) {
   if (type === 'start') {
     isCancelled = false;
     const { model, candidates } = payload as WorkerInput;
-    
+
     try {
       const startTime = Date.now();
-      
+
       const results = scoreMultipleCandidates(
         candidates,
         model,
@@ -44,7 +46,16 @@ self.onmessage = function(e: MessageEvent) {
             payload: progressData,
           } as WorkerMessage);
         },
-        () => isCancelled
+        () => isCancelled,
+        (entry: ScoringLogEntry) => {
+          const logData: ScoringLogData = {
+            entry,
+          };
+          self.postMessage({
+            type: 'log',
+            payload: logData,
+          } as WorkerMessage);
+        }
       );
 
       const totalMs = Date.now() - startTime;

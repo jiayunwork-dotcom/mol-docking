@@ -5,6 +5,8 @@ import type {
   ScoringResult,
   FeatureMatch,
   LigandConformation,
+  DistanceConstraint,
+  ScoringLogEntry,
 } from '../types';
 import { extractPharmacophoreFeatures } from './pharmacophoreExtractor';
 
@@ -119,6 +121,44 @@ function countIntrudingAtoms(
   return count;
 }
 
+function checkDistanceConstraints(
+  matches: FeatureMatch[],
+  constraints: DistanceConstraint[],
+  _modelFeatures: PharmacophoreFeature[],
+  candidateFeatures: PharmacophoreFeature[]
+): { violations: number; penalty: number } {
+  let violations = 0;
+  const candidateFeatureMap = new Map(candidateFeatures.map(f => [f.id, f]));
+  const modelToCandidateMap = new Map(matches.map(m => [m.modelFeatureId, m.candidateFeatureId]));
+
+  for (const constraint of constraints) {
+    const candIdA = modelToCandidateMap.get(constraint.featureIdA);
+    const candIdB = modelToCandidateMap.get(constraint.featureIdB);
+
+    if (!candIdA || !candIdB) {
+      continue;
+    }
+
+    const candFeatA = candidateFeatureMap.get(candIdA);
+    const candFeatB = candidateFeatureMap.get(candIdB);
+
+    if (!candFeatA || !candFeatB) {
+      continue;
+    }
+
+    const distance = distance3D(candFeatA, candFeatB);
+
+    if (distance < constraint.minDistance || distance > constraint.maxDistance) {
+      violations++;
+    }
+  }
+
+  return {
+    violations,
+    penalty: violations * (-10),
+  };
+}
+
 export function scoreConformation(
   conformation: LigandConformation,
   model: PharmacophoreModel
@@ -126,6 +166,8 @@ export function scoreConformation(
   score: number;
   baseScore: number;
   excludedVolumePenalty: number;
+  distanceConstraintPenalty: number;
+  distanceConstraintViolations: number;
   matches: FeatureMatch[];
   matchedRequiredCount: number;
   matchedOptionalCount: number;
@@ -134,7 +176,7 @@ export function scoreConformation(
   candidateFeatures: PharmacophoreFeature[];
 } {
   const candidateFeatures = extractPharmacophoreFeatures(conformation);
-  
+
   const requiredFeatures = model.features.filter(f => f.isRequired);
   const optionalFeatures = model.features.filter(f => !f.isRequired);
 
@@ -150,20 +192,29 @@ export function scoreConformation(
     model.maxOptionalMatch
   );
 
-  const baseScore = 
-    matchedRequiredCount * 10 + 
-    clampedOptionalCount * 5 - 
+  const baseScore =
+    matchedRequiredCount * 10 +
+    clampedOptionalCount * 5 -
     unmatchedRequiredCount * 20;
 
   const intrudingAtomCount = countIntrudingAtoms(conformation, model.excludedVolumes);
   const excludedVolumePenalty = intrudingAtomCount * (-15);
 
-  const finalScore = baseScore + excludedVolumePenalty;
+  const { violations: distanceConstraintViolations, penalty: distanceConstraintPenalty } = checkDistanceConstraints(
+    matches,
+    model.distanceConstraints || [],
+    model.features,
+    candidateFeatures
+  );
+
+  const finalScore = baseScore + excludedVolumePenalty + distanceConstraintPenalty;
 
   return {
     score: finalScore,
     baseScore,
     excludedVolumePenalty,
+    distanceConstraintPenalty,
+    distanceConstraintViolations,
     matches,
     matchedRequiredCount,
     matchedOptionalCount,
@@ -175,7 +226,8 @@ export function scoreConformation(
 
 export function scoreCandidateMolecule(
   candidate: CandidateMolecule,
-  model: PharmacophoreModel
+  model: PharmacophoreModel,
+  onLog?: (entry: ScoringLogEntry) => void
 ): ScoringResult {
   let bestResult: ReturnType<typeof scoreConformation> | null = null;
   let bestConformationIndex = 0;
@@ -183,7 +235,7 @@ export function scoreCandidateMolecule(
   for (let i = 0; i < candidate.conformations.length; i++) {
     const conf = candidate.conformations[i];
     const result = scoreConformation(conf, model);
-    
+
     if (!bestResult || result.score > bestResult.score) {
       bestResult = result;
       bestConformationIndex = i;
@@ -198,6 +250,8 @@ export function scoreCandidateMolecule(
       finalScore: 0,
       baseScore: 0,
       excludedVolumePenalty: 0,
+      distanceConstraintPenalty: 0,
+      distanceConstraintViolations: 0,
       matchedRequiredCount: 0,
       matchedOptionalCount: 0,
       totalRequiredCount: model.features.filter(f => f.isRequired).length,
@@ -210,6 +264,21 @@ export function scoreCandidateMolecule(
     };
   }
 
+  if (onLog) {
+    const logEntry: ScoringLogEntry = {
+      id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: Date.now(),
+      moleculeName: candidate.name,
+      featureCount: bestResult.candidateFeatures.length,
+      matchedRequired: bestResult.matchedRequiredCount,
+      totalRequired: model.features.filter(f => f.isRequired).length,
+      intrudingAtomCount: bestResult.intrudingAtomCount,
+      finalScore: bestResult.score,
+      distanceConstraintViolations: bestResult.distanceConstraintViolations,
+    };
+    onLog(logEntry);
+  }
+
   return {
     moleculeId: candidate.id,
     moleculeName: candidate.name,
@@ -217,6 +286,8 @@ export function scoreCandidateMolecule(
     finalScore: bestResult.score,
     baseScore: bestResult.baseScore,
     excludedVolumePenalty: bestResult.excludedVolumePenalty,
+    distanceConstraintPenalty: bestResult.distanceConstraintPenalty,
+    distanceConstraintViolations: bestResult.distanceConstraintViolations,
     matchedRequiredCount: bestResult.matchedRequiredCount,
     matchedOptionalCount: bestResult.matchedOptionalCount,
     totalRequiredCount: model.features.filter(f => f.isRequired).length,
@@ -233,7 +304,8 @@ export function scoreMultipleCandidates(
   candidates: CandidateMolecule[],
   model: PharmacophoreModel,
   onProgress?: (processed: number, total: number, currentName: string, elapsedMs: number) => void,
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean,
+  onLog?: (entry: ScoringLogEntry) => void
 ): ScoringResult[] {
   const results: ScoringResult[] = [];
   const startTime = Date.now();
@@ -244,7 +316,7 @@ export function scoreMultipleCandidates(
     }
 
     const candidate = candidates[i];
-    const result = scoreCandidateMolecule(candidate, model);
+    const result = scoreCandidateMolecule(candidate, model, onLog);
     results.push(result);
 
     if (onProgress && ((i + 1) % 10 === 0 || i === candidates.length - 1)) {
@@ -275,3 +347,21 @@ export function estimateRemainingTime(
   const remaining = rate * (total - processed);
   return formatTime(remaining);
 }
+
+export function getScoreGroup(score: number): 'excellent' | 'good' | 'fair' {
+  if (score >= 80) return 'excellent';
+  if (score >= 40) return 'good';
+  return 'fair';
+}
+
+export const SCORE_GROUP_LABELS: Record<'excellent' | 'good' | 'fair', string> = {
+  excellent: '优秀 (≥80分)',
+  good: '良好 (40~79分)',
+  fair: '一般 (<40分)',
+};
+
+export const SCORE_GROUP_COLORS: Record<'excellent' | 'good' | 'fair', string> = {
+  excellent: '#22c55e',
+  good: '#eab308',
+  fair: '#ef4444',
+};

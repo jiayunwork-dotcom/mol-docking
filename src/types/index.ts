@@ -202,7 +202,49 @@ export interface PharmacophoreFeature {
   radius: number;
   isRequired: boolean;
   normal?: { x: number; y: number; z: number };
+  originalRadius?: number;
 }
+
+export interface DistanceConstraint {
+  id: string;
+  featureIdA: string;
+  featureIdB: string;
+  minDistance: number;
+  maxDistance: number;
+}
+
+export interface PharmacophoreModelVersion {
+  version: number;
+  name: string;
+  createdAt: number;
+  features: PharmacophoreFeature[];
+  excludedVolumes: ExcludedVolume[];
+  distanceConstraints: DistanceConstraint[];
+  featureCount: number;
+  excludedVolumeCount: number;
+  description?: string;
+}
+
+export interface ScoringLogEntry {
+  id: string;
+  timestamp: number;
+  moleculeName: string;
+  featureCount: number;
+  matchedRequired: number;
+  totalRequired: number;
+  intrudingAtomCount: number;
+  finalScore: number;
+  distanceConstraintViolations: number;
+}
+
+export interface ResultFilterConfig {
+  minScore: number;
+  maxScore: number;
+  minMatchedFeatures: number;
+  maxExcludedVolumePenalty: number;
+}
+
+export type ScoreGroup = 'excellent' | 'good' | 'fair';
 
 export interface ExcludedVolume {
   id: string;
@@ -217,6 +259,7 @@ export interface PharmacophoreModel {
   name: string;
   features: PharmacophoreFeature[];
   excludedVolumes: ExcludedVolume[];
+  distanceConstraints: DistanceConstraint[];
   createdAt: number;
   minOptionalMatch: number;
   maxOptionalMatch: number;
@@ -243,6 +286,8 @@ export interface ScoringResult {
   finalScore: number;
   baseScore: number;
   excludedVolumePenalty: number;
+  distanceConstraintPenalty: number;
+  distanceConstraintViolations: number;
   matchedRequiredCount: number;
   matchedOptionalCount: number;
   totalRequiredCount: number;
@@ -259,6 +304,7 @@ export interface PharmacophoreState {
   candidateMolecules: CandidateMolecule[];
   scoringResults: ScoringResult[];
   selectedResult: ScoringResult | null;
+  selectedResults: string[];
   isScoring: boolean;
   scoringProgress: number;
   scoringTotal: number;
@@ -268,7 +314,30 @@ export interface PharmacophoreState {
   showCandidateMolecule: boolean;
   manualAddMode: 'none' | 'feature' | 'excluded';
   addingFeatureType: PharmacophoreFeatureType | null;
+  selectedFeatureIds: string[];
+  resultFilter: ResultFilterConfig;
+  showScoreGroups: boolean;
+  expandedScoreGroups: ScoreGroup[];
+  scoringLogs: ScoringLogEntry[];
+  showScoringLogs: boolean;
+  modelVersions: PharmacophoreModelVersion[];
+  currentVersion: number | null;
+  compareVersion: number | null;
 }
+
+export interface VersionDiff {
+  added: PharmacophoreFeature[];
+  removed: PharmacophoreFeature[];
+  modified: { old: PharmacophoreFeature; new: PharmacophoreFeature }[];
+}
+
+export const CANDIDATE_COLORS = [
+  '#00CED1',
+  '#FF69B4',
+  '#FF8C00',
+  '#9932CC',
+  '#8B4513',
+];
 
 export const PHARMACOPHORE_COLORS: Record<PharmacophoreFeatureType, string> = {
   hydrogen_bond_donor: '#3333FF',
@@ -307,8 +376,12 @@ export const DEFAULT_FEATURE_RADII: Record<PharmacophoreFeatureType, number> = {
 };
 
 export interface WorkerMessage {
-  type: 'start' | 'progress' | 'complete' | 'error' | 'cancel';
+  type: 'start' | 'progress' | 'complete' | 'error' | 'cancel' | 'log';
   payload?: unknown;
+}
+
+export interface ScoringLogData {
+  entry: ScoringLogEntry;
 }
 
 export interface ScoringWorkerData {

@@ -78,6 +78,13 @@ export function PharmacophoreIO() {
           z: v.z,
           radius: v.radius,
         })),
+        distanceConstraints: (data.distanceConstraints || []).map((c: any, idx: number) => ({
+          id: `constraint_${Date.now()}_${idx}`,
+          featureIdA: c.featureIdA,
+          featureIdB: c.featureIdB,
+          minDistance: c.minDistance,
+          maxDistance: c.maxDistance,
+        })),
         createdAt: Date.now(),
         minOptionalMatch: data.minOptionalMatch || 0,
         maxOptionalMatch: data.maxOptionalMatch || 100,

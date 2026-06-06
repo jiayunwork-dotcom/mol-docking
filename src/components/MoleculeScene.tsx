@@ -10,7 +10,7 @@ import { MolecularSurface, PocketSurface } from './MolecularSurface';
 import { LigandSticks } from './LigandSticks';
 import { InteractionLines } from './InteractionLines';
 import { MeasurementAnnotations, SelectedAtomsHighlighter } from './MeasurementAnnotations';
-import { PharmacophoreFeatures, ExcludedVolumes, CandidateMoleculeDisplay } from './PharmacophoreFeatures';
+import { PharmacophoreFeatures, ExcludedVolumes, CandidateMoleculeDisplay, MultiCandidateDisplay, CandidateLegend, DistanceConstraintLabels } from './PharmacophoreFeatures';
 import { formatMeasurement } from '../analysis/measurementTools';
 
 export const CONFORMATION_COLORS = [
@@ -58,7 +58,10 @@ function SceneContent() {
     addExcludedVolume,
     setManualAddMode,
     selectedResult,
+    selectedResults,
+    scoringResults,
     candidateMolecules,
+    selectedFeatureIds,
   } = usePharmacophoreStore();
 
   const { camera, raycaster, gl, scene } = useThree();
@@ -424,12 +427,26 @@ function SceneContent() {
             showFeatures={showFeatures}
             selectedResult={selectedResult}
             showCandidateMolecule={showCandidateMolecule}
+            selectedFeatureIds={selectedFeatureIds}
+            distanceConstraints={model.distanceConstraints}
           />
           <ExcludedVolumes
             volumes={model.excludedVolumes}
             showExcludedVolumes={showExcludedVolumes}
           />
-          {selectedResult && (
+          <DistanceConstraintLabels
+            constraints={model.distanceConstraints}
+            features={model.features}
+          />
+          {selectedResults.length > 1 && (
+            <MultiCandidateDisplay
+              results={scoringResults}
+              candidates={candidateMolecules}
+              show={showCandidateMolecule}
+              selectedIds={selectedResults}
+            />
+          )}
+          {selectedResults.length <= 1 && selectedResult && (
             <CandidateMoleculeDisplay
               result={selectedResult}
               candidates={candidateMolecules}
@@ -451,6 +468,7 @@ interface MoleculeSceneProps {
 
 export function MoleculeScene({ width, height }: MoleculeSceneProps) {
   const labelsContainerRef = useRef<HTMLDivElement>(null);
+  const { scoringResults, selectedResults, model } = usePharmacophoreStore();
 
   return (
     <div style={{ position: 'relative', width, height }}>
@@ -462,6 +480,38 @@ export function MoleculeScene({ width, height }: MoleculeSceneProps) {
         <SceneContent />
       </Canvas>
       <div ref={labelsContainerRef} data-labels style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+      <CandidateLegend results={scoringResults} selectedIds={selectedResults} />
+      {model && model.distanceConstraints.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '10px',
+            left: '10px',
+            background: 'rgba(0, 0, 0, 0.8)',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            zIndex: 100,
+          }}
+        >
+          {model.distanceConstraints.map((constraint) => {
+            const featA = model.features.find((f) => f.id === constraint.featureIdA);
+            const featB = model.features.find((f) => f.id === constraint.featureIdB);
+            if (!featA || !featB) return null;
+            return (
+              <div
+                key={constraint.id}
+                style={{
+                  color: 'white',
+                  fontSize: '11px',
+                  marginBottom: '2px',
+                }}
+              >
+                {featA.type.slice(0, 4)} ↔ {featB.type.slice(0, 4)}: {constraint.minDistance}-{constraint.maxDistance}Å
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
