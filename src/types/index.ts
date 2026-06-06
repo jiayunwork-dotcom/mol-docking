@@ -184,3 +184,146 @@ export const KYTE_DOOLITTLE: Record<string, number> = {
   LEU: 3.8, LYS: -3.9, MET: 1.9, PHE: 2.8, PRO: -1.6,
   SER: -0.8, THR: -0.7, TRP: -0.9, TYR: -1.3, VAL: 4.2,
 };
+
+export type PharmacophoreFeatureType = 
+  | 'hydrogen_bond_donor' 
+  | 'hydrogen_bond_acceptor' 
+  | 'positive_charge' 
+  | 'negative_charge' 
+  | 'hydrophobic' 
+  | 'aromatic_ring';
+
+export interface PharmacophoreFeature {
+  id: string;
+  type: PharmacophoreFeatureType;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  isRequired: boolean;
+  normal?: { x: number; y: number; z: number };
+}
+
+export interface ExcludedVolume {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+}
+
+export interface PharmacophoreModel {
+  id: string;
+  name: string;
+  features: PharmacophoreFeature[];
+  excludedVolumes: ExcludedVolume[];
+  createdAt: number;
+  minOptionalMatch: number;
+  maxOptionalMatch: number;
+}
+
+export interface CandidateMolecule {
+  id: string;
+  name: string;
+  smiles?: string;
+  conformations: LigandConformation[];
+  sourceData?: string;
+}
+
+export interface FeatureMatch {
+  modelFeatureId: string;
+  candidateFeatureId: string;
+  distance: number;
+}
+
+export interface ScoringResult {
+  moleculeId: string;
+  moleculeName: string;
+  smiles?: string;
+  finalScore: number;
+  baseScore: number;
+  excludedVolumePenalty: number;
+  matchedRequiredCount: number;
+  matchedOptionalCount: number;
+  totalRequiredCount: number;
+  totalOptionalCount: number;
+  unmatchedRequiredCount: number;
+  intrudingAtomCount: number;
+  matchedFeatures: FeatureMatch[];
+  bestConformationIndex: number;
+  candidateFeatures: PharmacophoreFeature[];
+}
+
+export interface PharmacophoreState {
+  model: PharmacophoreModel | null;
+  candidateMolecules: CandidateMolecule[];
+  scoringResults: ScoringResult[];
+  selectedResult: ScoringResult | null;
+  isScoring: boolean;
+  scoringProgress: number;
+  scoringTotal: number;
+  scoringMessage: string;
+  showFeatures: boolean;
+  showExcludedVolumes: boolean;
+  showCandidateMolecule: boolean;
+  manualAddMode: 'none' | 'feature' | 'excluded';
+  addingFeatureType: PharmacophoreFeatureType | null;
+}
+
+export const PHARMACOPHORE_COLORS: Record<PharmacophoreFeatureType, string> = {
+  hydrogen_bond_donor: '#3333FF',
+  hydrogen_bond_acceptor: '#FF3333',
+  positive_charge: '#9932CC',
+  negative_charge: '#FF8C00',
+  hydrophobic: '#32CD32',
+  aromatic_ring: '#FFD700',
+};
+
+export const PHARMACOPHORE_ICONS: Record<PharmacophoreFeatureType, string> = {
+  hydrogen_bond_donor: '💧',
+  hydrogen_bond_acceptor: '🔴',
+  positive_charge: '➕',
+  negative_charge: '➖',
+  hydrophobic: '💚',
+  aromatic_ring: '🔶',
+};
+
+export const PHARMACOPHORE_LABELS: Record<PharmacophoreFeatureType, string> = {
+  hydrogen_bond_donor: '氢键供体',
+  hydrogen_bond_acceptor: '氢键受体',
+  positive_charge: '正电荷中心',
+  negative_charge: '负电荷中心',
+  hydrophobic: '疏水中心',
+  aromatic_ring: '芳香环中心',
+};
+
+export const DEFAULT_FEATURE_RADII: Record<PharmacophoreFeatureType, number> = {
+  hydrogen_bond_donor: 1.5,
+  hydrogen_bond_acceptor: 1.5,
+  positive_charge: 2.0,
+  negative_charge: 2.0,
+  hydrophobic: 1.8,
+  aromatic_ring: 1.2,
+};
+
+export interface WorkerMessage {
+  type: 'start' | 'progress' | 'complete' | 'error' | 'cancel';
+  payload?: unknown;
+}
+
+export interface ScoringWorkerData {
+  model: PharmacophoreModel;
+  candidates: CandidateMolecule[];
+}
+
+export interface ScoringProgressData {
+  processed: number;
+  total: number;
+  currentName: string;
+  elapsedMs: number;
+}
+
+export interface ScoringCompleteData {
+  results: ScoringResult[];
+  totalMs: number;
+}

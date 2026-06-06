@@ -8,12 +8,18 @@ import { Interaction2DView } from './components/Interaction2DView';
 import { MeasurementPanel } from './components/MeasurementPanel';
 import { ExportPanel } from './components/ExportPanel';
 import { ViewPresets } from './components/ViewPresets';
+import { PharmacophoreEditor } from './components/PharmacophoreEditor';
+import { PharmacophoreScreening } from './components/PharmacophoreScreening';
+import { PharmacophoreResultPanel } from './components/PharmacophoreResultPanel';
+import { PharmacophoreIO } from './components/PharmacophoreIO';
 import { useMolStore } from './store/molStore';
+import { usePharmacophoreStore } from './store/pharmacophoreStore';
 
 function App() {
   const { loading, protein, ligand, warnings, clearWarnings } = useMolStore();
+  const { selectedResult } = usePharmacophoreStore();
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const [activeTab, setActiveTab] = useState<'render' | 'interactions' | 'conformations' | '2dview' | 'measure' | 'export'>('render');
+  const [activeTab, setActiveTab] = useState<'render' | 'interactions' | 'conformations' | '2dview' | 'measure' | 'pharma' | 'screening' | 'io' | 'export'>('pharma');
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -32,6 +38,9 @@ function App() {
   }, []);
 
   const tabs = [
+    { id: 'pharma', label: '药效团', icon: '🧬' },
+    { id: 'screening', label: '虚拟筛选', icon: '⚡' },
+    { id: 'io', label: '导入导出', icon: '📦' },
     { id: 'render', label: '渲染', icon: '🎨' },
     { id: 'interactions', label: '相互作用', icon: '🔗' },
     { id: 'conformations', label: '构象', icon: '🔬' },
@@ -102,6 +111,9 @@ function App() {
             ))}
           </div>
 
+          {activeTab === 'pharma' && <PharmacophoreEditor />}
+          {activeTab === 'screening' && <PharmacophoreScreening />}
+          {activeTab === 'io' && <PharmacophoreIO />}
           {activeTab === 'render' && (
             <>
               <ViewPresets />
@@ -158,14 +170,19 @@ function App() {
                   </div>
                   <div className="bg-gray-800 p-4 rounded-lg">
                     <div className="text-2xl mb-2">🔍</div>
-                    <div>相互作用分析</div>
-                    <div className="text-xs">氢键/疏水/π-π等</div>
+                    <div>药效团分析</div>
+                    <div className="text-xs">特征提取/虚拟筛选</div>
                   </div>
                 </div>
               </div>
             </div>
           ) : (
-            <MoleculeScene width={dimensions.width} height={dimensions.height} />
+            <div className="h-full flex flex-col">
+              <div className="flex-1 overflow-hidden">
+                <MoleculeScene width={dimensions.width} height={dimensions.height - (selectedResult ? 200 : 0)} />
+              </div>
+              {selectedResult && <PharmacophoreResultPanel />}
+            </div>
           )}
         </div>
       </div>

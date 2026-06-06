@@ -3,12 +3,14 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useMolStore } from '../store/molStore';
+import { usePharmacophoreStore } from '../store/pharmacophoreStore';
 import { ProteinCartoon } from './ProteinCartoon';
 import { ProteinWireframe } from './ProteinWireframe';
 import { MolecularSurface, PocketSurface } from './MolecularSurface';
 import { LigandSticks } from './LigandSticks';
 import { InteractionLines } from './InteractionLines';
 import { MeasurementAnnotations, SelectedAtomsHighlighter } from './MeasurementAnnotations';
+import { PharmacophoreFeatures, ExcludedVolumes, CandidateMoleculeDisplay } from './PharmacophoreFeatures';
 import { formatMeasurement } from '../analysis/measurementTools';
 
 export const CONFORMATION_COLORS = [
@@ -44,6 +46,20 @@ function SceneContent() {
     clipDistance,
     showOnlyNearbyResidues,
   } = useMolStore();
+
+  const {
+    model,
+    showFeatures,
+    showExcludedVolumes,
+    showCandidateMolecule,
+    manualAddMode,
+    addingFeatureType,
+    addFeature,
+    addExcludedVolume,
+    setManualAddMode,
+    selectedResult,
+    candidateMolecules,
+  } = usePharmacophoreStore();
 
   const { camera, raycaster, gl, scene } = useThree();
   const controlsRef = useRef<any>(null);
@@ -158,7 +174,38 @@ function SceneContent() {
 
   const displayProtein = filteredProtein || protein;
 
-  const handleClick = useCallback(() => {
+  const handleClick = useCallback((event: any) => {
+    if (manualAddMode !== 'none' && addingFeatureType !== null) {
+      const rect = gl.domElement.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      
+      const ndc = new THREE.Vector3(x, y, 0.5);
+      ndc.unproject(camera);
+      
+      const dir = ndc.sub(camera.position).normalize();
+      const distance = -camera.position.z / dir.z;
+      const pos = camera.position.clone().add(dir.multiplyScalar(distance));
+      
+      if (manualAddMode === 'feature') {
+        addFeature({
+          type: addingFeatureType,
+          x: pos.x,
+          y: pos.y,
+          z: pos.z,
+        });
+      } else if (manualAddMode === 'excluded') {
+        addExcludedVolume({
+          x: pos.x,
+          y: pos.y,
+          z: pos.z,
+        });
+      }
+      
+      setManualAddMode('none');
+      return;
+    }
+
     if (measurementMode === 'none') {
       const intersects = raycaster.intersectObjects(scene.children, true);
       for (const hit of intersects) {
@@ -179,7 +226,20 @@ function SceneContent() {
         }
       }
     }
-  }, [measurementMode, raycaster, scene.children, camera, setCameraTarget, selectAtom]);
+  }, [
+    manualAddMode,
+    addingFeatureType,
+    addFeature,
+    addExcludedVolume,
+    setManualAddMode,
+    measurementMode,
+    raycaster,
+    scene.children,
+    camera,
+    gl.domElement,
+    setCameraTarget,
+    selectAtom,
+  ]);
 
   const handleDoubleClick = useCallback(() => {
     const intersects = raycaster.intersectObjects(scene.children, true);
@@ -355,6 +415,28 @@ function SceneContent() {
 
       {selectedAtoms.length > 0 && (
         <SelectedAtomsHighlighter selectedAtoms={selectedAtoms} />
+      )}
+
+      {model && (
+        <>
+          <PharmacophoreFeatures
+            features={model.features}
+            showFeatures={showFeatures}
+            selectedResult={selectedResult}
+            showCandidateMolecule={showCandidateMolecule}
+          />
+          <ExcludedVolumes
+            volumes={model.excludedVolumes}
+            showExcludedVolumes={showExcludedVolumes}
+          />
+          {selectedResult && (
+            <CandidateMoleculeDisplay
+              result={selectedResult}
+              candidates={candidateMolecules}
+              show={showCandidateMolecule}
+            />
+          )}
+        </>
       )}
 
       <primitive object={new THREE.AxesHelper(2)} position={[-20, -20, -20]} />
